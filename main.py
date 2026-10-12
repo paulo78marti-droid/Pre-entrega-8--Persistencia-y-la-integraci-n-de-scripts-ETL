@@ -1,10 +1,20 @@
-import logging
+"""
+====================================================================
+Pipeline ETL Meteorológico
+Pre-entrega: Persistencia y la integración de scripts ETL
+Curso: Coderhouse - Data Science II
+====================================================================
+Este script orquesta el flujo completo de:
+1. Extracción de datos desde la API pública de Open-Meteo.
+2. Transformación y limpieza de datos usando Pandas.
+3. Carga y persistencia en una base de datos local SQLite con SQLAlchemy.
+====================================================================
+"""
 import sys
-import time
 from pathlib import Path
 
-# Asegurar que el directorio raíz del proyecto esté en sys.path para portabilidad
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# Asegurar que Python reconozca las carpetas del proyecto
+sys.path.append(str(Path(__file__).resolve().parent))
 
 from config import settings
 from src.extract import extract_weather_data
@@ -17,60 +27,52 @@ from src.load import (
     get_persistence_metrics
 )
 
-# Configurar sistema de logging estructurado
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
-)
-logger = logging.getLogger("ETL_Pipeline")
 
-
-def run_pipeline() -> None:
-    """Orquestador principal del pipeline ETL meteorológico."""
-    start_time = time.perf_counter()
-    logger.info("==========================================================")
-    logger.info("Iniciando Pipeline ETL Meteorológico con SQLAlchemy 2.0")
-    logger.info("Ciudad: %s (Lat: %s, Lon: %s)", settings.CITY_NAME, settings.LATITUDE, settings.LONGITUDE)
-    logger.info("Destino: %s", settings.DATABASE_URL)
-    logger.info("==========================================================")
+def run_pipeline():
+    """
+    Función principal que ejecuta secuencialmente todas las etapas del ETL.
+    """
+    print("=" * 65)
+    print(" INICIANDO PIPELINE ETL DE CLIMA (Coderhouse Data Science II)")
+    print(f" Ciudad: {settings.CITY_NAME}")
+    print(f" Base de Datos: {settings.DATABASE_URL}")
+    print("=" * 65)
 
     try:
-        # 1. Configuración del motor y creación de esquema relacional
+        # Paso 1: Configurar la base de datos y crear tablas
+        print("\n[PASO 1] Conectando a SQLite y verificando tablas...")
         engine = get_db_engine()
         initialize_database(engine)
 
-        # 2. Extracción (E)
-        logger.info("[Paso 1/3] Extrayendo datos desde Open-Meteo...")
+        # Paso 2: Extracción (E)
+        print("\n[PASO 2] Extrayendo datos de la API pública...")
         raw_data = extract_weather_data()
-        logger.info("-> Extracción exitosa.")
+        print("-> Extracción completada.")
 
-        # 3. Transformación (T)
-        logger.info("[Paso 2/3] Transformando y limpiando datos meteorológicos...")
+        # Paso 3: Transformación (T)
+        print("\n[PASO 3] Limpiando datos y calculando agregaciones...")
         df_hourly, df_daily = transform_weather_data(raw_data, city=settings.CITY_NAME)
-        logger.info("-> Transformación exitosa.")
+        print("-> Transformación completada.")
 
-        # 4. Carga y Persistencia (L)
-        logger.info("[Paso 3/3] Persistiendo datos en SQLite con transacciones ACID e idempotencia...")
+        # Paso 4: Carga y Persistencia (L)
+        print("\n[PASO 4] Cargando datos en la base de datos local SQLite...")
         load_weather_hourly(engine, df_hourly)
         load_weather_daily_summary(engine, df_daily)
-        logger.info("-> Carga exitosa.")
+        print("-> Carga completada.")
 
-        # 5. Verificación de Integridad y Métricas
-        metrics = get_persistence_metrics(engine)
-        logger.info("==========================================================")
-        logger.info("Métricas de Persistencia en Base de Datos:")
-        logger.info(" - Total registros en 'weather_hourly': %d", metrics["total_hourly_records"])
-        logger.info(" - Total registros en 'weather_daily_summary': %d", metrics["total_daily_summaries"])
-        if metrics["latest_daily_summary"]:
-            logger.info(" - Último resumen diario: %s", metrics["latest_daily_summary"])
-        logger.info("==========================================================")
+        # Paso 5: Métricas de control
+        print("\n[PASO 5] Verificando métricas de persistencia...")
+        metricas = get_persistence_metrics(engine)
+        print("-" * 65)
+        print(" RESUMEN EN BASE DE DATOS:")
+        print(f"  - Total registros en 'weather_hourly': {metricas['total_hourly_records']}")
+        print(f"  - Total resúmenes en 'weather_daily_summary': {metricas['total_daily_summaries']}")
+        print("-" * 65)
 
-        elapsed = time.perf_counter() - start_time
-        logger.info("Pipeline completado exitosamente en %.2f segundos.", elapsed)
+        print("\n¡Pipeline ETL finalizado con éxito!")
 
-    except Exception as exc:
-        logger.critical("Error fatal durante la ejecución del pipeline: %s", exc, exc_info=True)
+    except Exception as error:
+        print(f"\n[ERROR] Ocurrió un problema durante la ejecución: {error}")
         sys.exit(1)
 
 

@@ -1,64 +1,79 @@
-"""Script de verificación técnica para auditar persistencia, idempotencia y consultas analíticas."""
-import logging
+"""
+====================================================================
+Script de Verificación y Consultas SQL
+Pre-entrega: Persistencia y la integración de scripts ETL
+Curso: Coderhouse - Data Science II
+====================================================================
+Permite auditar el contenido de la base de datos SQLite y realizar
+consultas analíticas directas sobre los datos persistidos.
+====================================================================
+"""
 import sys
 from pathlib import Path
 
-# Asegurar que el directorio raíz del proyecto esté en sys.path para portabilidad
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# Permitir importar módulos de src y config
+sys.path.append(str(Path(__file__).resolve().parent))
 
 from sqlalchemy import text
-from config import settings
 from src.load import get_db_engine, get_persistence_metrics
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s]: %(message)s")
-logger = logging.getLogger("Verification")
 
-
-def run_checks() -> None:
+def run_checks():
     engine = get_db_engine()
-    logger.info("=== Verificación de Persistencia en Base de Datos ===")
 
-    # 1. Métricas de conteo
-    metrics = get_persistence_metrics(engine)
-    logger.info("Registros horarios almacenados: %d", metrics["total_hourly_records"])
-    logger.info("Resúmenes diarios almacenados: %d", metrics["total_daily_summaries"])
+    print("=" * 65)
+    print(" VERIFICACIÓN DE PERSISTENCIA Y CONSULTAS SQL")
+    print("=" * 65)
 
-    # 2. Consultas analíticas SQL directas
+    # 1. Conteo general de registros
+    metricas = get_persistence_metrics(engine)
+    print(f"Registros horarios almacenados: {metricas['total_hourly_records']}")
+    print(f"Resúmenes diarios almacenados:  {metricas['total_daily_summaries']}")
+    print("-" * 65)
+
     with engine.connect() as conn:
-        logger.info("\n--- Consulta 1: Top 5 horas con mayor temperatura registrada ---")
+        # Consulta 1: Horas más calurosas
+        print("\n Consulta 1: Top 5 horas con mayor temperatura registrada")
         q1 = conn.execute(text("""
             SELECT city, timestamp, temperature_c, wind_speed_kmh, wind_category
             FROM weather_hourly
             ORDER BY temperature_c DESC
             LIMIT 5;
         """)).fetchall()
-        for row in q1:
-            logger.info("  %s | %s | %s°C | Viento: %s km/h (%s)", row[0], row[1], row[2], row[3], row[4])
 
-        logger.info("\n--- Consulta 2: Resumen de días con lluvia acumulada ---")
+        for fila in q1:
+            print(f"  {fila[0]} | {fila[1]} | {fila[2]}°C | Viento: {fila[3]} km/h ({fila[4]})")
+
+        # Consulta 2: Días con lluvia
+        print("\n Consulta 2: Días con lluvia acumulada")
         q2 = conn.execute(text("""
             SELECT city, date, total_precipitation_mm, rainy_hours_count, temp_avg_c
             FROM weather_daily_summary
             WHERE total_precipitation_mm > 0
             ORDER BY total_precipitation_mm DESC;
         """)).fetchall()
-        if q2:
-            for row in q2:
-                logger.info("  %s | %s | Lluvia: %s mm (%d hs) | Temp media: %s°C", row[0], row[1], row[2], row[3], row[4])
-        else:
-            logger.info("  (No se registraron precipitaciones en el periodo consultado)")
 
-        logger.info("\n--- Consulta 3: Distribución por categoría de viento ---")
+        if q2:
+            for fila in q2:
+                print(f"  {fila[0]} | {fila[1]} | Lluvia: {fila[2]} mm ({fila[3]} hs) | Temp media: {fila[4]}°C")
+        else:
+            print("  (No se registraron precipitaciones en los días consultados)")
+
+        # Consulta 3: Agrupación por tipo de viento
+        print("\n Consulta 3: Horas por categoría de viento")
         q3 = conn.execute(text("""
-            SELECT wind_category, COUNT(*) AS count_hours, ROUND(AVG(temperature_c), 2) AS avg_temp
+            SELECT wind_category, COUNT(*) AS total_horas, ROUND(AVG(temperature_c), 2) AS temp_promedio
             FROM weather_hourly
             GROUP BY wind_category
-            ORDER BY count_hours DESC;
+            ORDER BY total_horas DESC;
         """)).fetchall()
-        for row in q3:
-            logger.info("  Categoría: %-25s | Horas: %3d | Temp Media: %s°C", row[0], row[1], row[2])
 
-    logger.info("\n=== Todas las verificaciones analíticas finalizaron con éxito ===")
+        for fila in q3:
+            print(f"  Categoría: {fila[0]:<20} | Total Horas: {fila[1]:<4} | Temp Promedio: {fila[2]}°C")
+
+    print("\n" + "=" * 65)
+    print(" Verificación completada exitosamente.")
+    print("=" * 65)
 
 
 if __name__ == "__main__":

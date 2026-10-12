@@ -1,103 +1,57 @@
+"""
+Módulo de Extracción (ETL)
+Consume la API pública de clima Open-Meteo y guarda una copia cruda (Staging Area).
+"""
 import json
-import logging
-import time
-from typing import Any, Dict, Optional
 import requests
-
 from config import settings
 
-logger = logging.getLogger(__name__)
 
-
-def get_with_retries(
-    url: str,
-    params: Dict[str, Any],
-    max_retries: int = settings.MAX_RETRIES,
-    backoff_factor: int = settings.RETRY_BACKOFF_FACTOR,
-    timeout: int = settings.REQUEST_TIMEOUT
-) -> requests.Response:
+def extract_weather_data():
     """
-    Realiza una petición HTTP GET implementando backoff exponencial y timeout.
-    Distingue errores transitorios (5xx, 429) de errores permanentes (4xx).
+    Realiza una petición GET a la API Open-Meteo para obtener datos meteorológicos.
+    Aplica el patrón Staging Area guardando el archivo JSON en 'data/raw/'.
+    Si no hay conexión a internet, recurre al último archivo guardado localmente.
     """
-    delay = 1
-    for attempt in range(1, max_retries + 1):
-        try:
-            logger.info("Realizando petición a %s (Intento %d/%d)...", url, attempt, max_retries)
-            response = requests.get(url, params=params, timeout=timeout)
-
-            # Éxito
-            if response.status_code == 200:
-                return response
-
-            # Errores transitorios que ameritan reintento (Rate Limit o error de servidor)
-            if response.status_code in (429, 500, 502, 503, 504):
-                logger.warning(
-                    "Error HTTP transitorio %d. Reintentando en %d segundos...",
-                    response.status_code,
-                    delay
-                )
-                time.sleep(delay)
-                delay *= backoff_factor
-            else:
-                # Errores cliente (400, 401, 404, etc.) son permanentes
-                logger.error("Error permanente del cliente HTTP %d: %s", response.status_code, response.text)
-                response.raise_for_status()
-
-        except (requests.ConnectionError, requests.Timeout) as exc:
-            logger.warning("Fallo de red o timeout (%s). Reintentando en %d s...", exc, delay)
-            if attempt == max_retries:
-                raise
-            time.sleep(delay)
-            delay *= backoff_factor
-
-    raise RuntimeError(f"Se superó el límite de {max_retries} reintentos al consultar {url}")
-
-
-def extract_weather_data(
-    latitude: float = settings.LATITUDE,
-    longitude: float = settings.LONGITUDE,
-    timezone: str = settings.TIMEZONE,
-    past_days: int = 7,
-    forecast_days: int = 3,
-    save_raw: bool = True
-) -> Dict[str, Any]:
-    """
-    Extrae datos meteorológicos desde la API pública Open-Meteo.
-    Implementa el patrón Staging Area guardando los datos crudos en data/raw/.
-    Si la conexión falla, intenta cargar desde el archivo en staging para reproducibilidad.
-    """
+    url = settings.API_BASE_URL
     params = {
-        "latitude": latitude,
-        "longitude": longitude,
+        "latitude": settings.LATITUDE,
+        "longitude": settings.LONGITUDE,
         "hourly": "temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m",
-        "timezone": timezone,
-        "past_days": past_days,
-        "forecast_days": forecast_days,
+        "timezone": settings.TIMEZONE,
+        "past_days": 7,       # Datos de los últimos 7 días
+        "forecast_days": 3    # Pronóstico de los próximos 3 días
     }
 
     cache_file = settings.RAW_DATA_DIR / "weather_raw_latest.json"
 
+    print(f"[EXTRACT] Consultando API Open-Meteo para {settings.CITY_NAME}...")
+
     try:
-        response = get_with_retries(settings.API_BASE_URL, params=params)
+        # Petición HTTP con timeout para evitar bloqueos
+        response = requests.get(url, params=params, timeout=15)
+        response.raise_for_status()  # Lanza excepción si el código no es 200 OK
         data = response.json()
 
-        # Validación básica de estructura de respuesta
+        # Validar que la respuesta tenga el bloque horario esperado
         if "hourly" not in data or "time" not in data["hourly"]:
-            raise ValueError("La respuesta de la API no contiene el nodo 'hourly.time' esperado.")
+            raise ValueError("El JSON recibido no contiene el campo 'hourly.time'.")
 
-        # Guardar en Staging Area
-        if save_raw:
-            with open(cache_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            logger.info("Datos crudos persistidos en Staging: %s", cache_file)
+        # Patrón Staging: Guardar datos crudos en la carpeta raw
+        with open(cache_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
 
+        print(f"[EXTRACT] Datos crudos guardados correctamente en Staging: {cache_file.name}")
         return data
 
-    except Exception as exc:
-        logger.error("Error durante la extracción en vivo de la API: %s", exc)
+    except requests.RequestException as error:
+        print(f"[ALERTA] Error al consultar la API en vivo: {error}")
+
+        # Si falla internet o la API, usamos la copia local si existe
         if cache_file.exists():
-            logger.warning("Recuperando datos crudos desde respaldo local en staging: %s", cache_file)
+            print(f"[EXTRACT] Cargando datos desde copia de respaldo local (Staging): {cache_file.name}")
             with open(cache_file, "r", encoding="utf-8") as f:
                 return json.load(f)
-        raise
+
+        # Si no hay respaldo, relanzamos el error
+        raise error

@@ -1,9 +1,11 @@
 -- ====================================================================
--- DDL: Creación de tablas para la Base de Datos Analítica Meteorológica
--- Motor: SQLite (compatible con SQLAlchemy 2.0)
+-- Script DDL: Creación de tablas para la Base de Datos SQLite
+-- Proyecto: Pipeline ETL Meteorológico
+-- Curso: Coderhouse - Data Science II
 -- ====================================================================
 
--- 1. Tabla de mediciones horarias detalladas
+-- 1. Tabla de datos horarios detallados
+-- Guarda las observaciones hora a hora del clima en la ciudad.
 CREATE TABLE IF NOT EXISTS weather_hourly (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     city VARCHAR(50) NOT NULL,
@@ -18,11 +20,13 @@ CREATE TABLE IF NOT EXISTS weather_hourly (
     CONSTRAINT uq_city_timestamp UNIQUE (city, timestamp)
 );
 
--- Índices para optimización de consultas analíticas
+-- Índice para acelerar las consultas por ciudad y fecha/hora
 CREATE INDEX IF NOT EXISTS idx_weather_hourly_city_time 
 ON weather_hourly (city, timestamp);
 
--- 2. Tabla de resumen agregado diario (Data Mart / capa analítica)
+
+-- 2. Tabla de resumen diario (Data Mart / Agregaciones)
+-- Guarda un resumen consolidado por día con métricas clave (mín, máx, promedio de temp, lluvia acumulada).
 CREATE TABLE IF NOT EXISTS weather_daily_summary (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     city VARCHAR(50) NOT NULL,
@@ -37,6 +41,6 @@ CREATE TABLE IF NOT EXISTS weather_daily_summary (
     CONSTRAINT uq_city_date UNIQUE (city, date)
 );
 
--- Índice para consultas por fecha y ciudad
+-- Índice para acelerar consultas por ciudad y fecha
 CREATE INDEX IF NOT EXISTS idx_weather_daily_city_date 
 ON weather_daily_summary (city, date);

@@ -1,114 +1,101 @@
-import logging
-from typing import Dict, Any, List
+"""
+Módulo de Carga y Persistencia (ETL)
+Conecta a la base de datos SQLite con SQLAlchemy, crea tablas y persiste los datos
+evitando duplicados si el script se ejecuta múltiples veces.
+"""
 import pandas as pd
-from sqlalchemy import create_engine, Engine, text, select, func
-from sqlalchemy.orm import Session
-from sqlalchemy.dialects.sqlite import insert as sqlite_upsert
-
+from sqlalchemy import create_engine, text
 from config import settings
-from src.models import Base, WeatherHourly, WeatherDailySummary
-
-logger = logging.getLogger(__name__)
+from src.models import Base
 
 
-def get_db_engine(database_url: str = settings.DATABASE_URL) -> Engine:
-    """Crea y retorna el Engine de SQLAlchemy 2.0 con pool y conexión segura."""
-    return create_engine(database_url, echo=False)
-
-
-def initialize_database(engine: Engine) -> None:
+def get_db_engine():
     """
-    Inicializa el esquema de la base de datos creando las tablas e índices
-    declarados en Base.metadata si no existen.
+    Crea y retorna el motor de conexión (Engine) de SQLAlchemy.
     """
-    logger.info("Verificando/creando tablas e índices en la base de datos...")
+    return create_engine(settings.DATABASE_URL)
+
+
+def initialize_database(engine):
+    """
+    Crea las tablas en la base de datos SQLite si todavía no existen.
+    Utiliza los modelos definidos en src/models.py.
+    """
+    print("[DB] Verificando esquema de tablas en SQLite...")
     Base.metadata.create_all(engine)
-    logger.info("Esquema relacional verificado exitosamente.")
+    print("[DB] Tablas verificadas exitosamente.")
 
 
-def load_weather_hourly(engine: Engine, df_hourly: pd.DataFrame) -> int:
+def load_weather_hourly(engine, df_hourly):
     """
-    Carga registros horarios en la tabla 'weather_hourly' de manera IDEMPOTENTE.
-    Utiliza SQLite UPSERT (ON CONFLICT (city, timestamp) DO UPDATE) para evitar duplicados.
-    Se ejecuta dentro de una transacción gestionada.
+    Carga registros horarios en la tabla 'weather_hourly'.
+    Para evitar duplicados, consulta qué marcas de tiempo ya existen
+    y solo inserta las filas nuevas.
     """
     if df_hourly.empty:
-        logger.warning("df_hourly está vacío. No hay registros para cargar.")
+        print("[LOAD] df_hourly está vacío. Nada que cargar.")
         return 0
 
-    records: List[Dict[str, Any]] = df_hourly.to_dict(orient="records")
+    ciudad = df_hourly["city"].iloc[0]
 
-    # En SQLAlchemy 2.0, ejecutamos el UPSERT en lotes para máxima eficiencia
-    stmt = sqlite_upsert(WeatherHourly).values(records)
-    upsert_stmt = stmt.on_conflict_do_update(
-        index_elements=["city", "timestamp"],
-        set_={
-            "temperature_c": stmt.excluded.temperature_c,
-            "humidity_pct": stmt.excluded.humidity_pct,
-            "precipitation_mm": stmt.excluded.precipitation_mm,
-            "wind_speed_kmh": stmt.excluded.wind_speed_kmh,
-            "wind_category": stmt.excluded.wind_category,
-            "is_rainy": stmt.excluded.is_rainy,
-            "ingested_at": stmt.excluded.ingested_at,
-        }
-    )
+    # 1. Consultar marcas de tiempo ya guardadas en la base de datos
+    with engine.connect() as conn:
+        query = text("SELECT timestamp FROM weather_hourly WHERE city = :city")
+        resultado = conn.execute(query, {"city": ciudad}).fetchall()
+        timestamps_existentes = set(pd.to_datetime(fila[0]) for fila in resultado)
 
-    with engine.begin() as conn:
-        result = conn.execute(upsert_stmt)
-        rowcount = result.rowcount
+    # 2. Filtrar únicamente las filas que no están en la base de datos
+    df_nuevos = df_hourly[~pd.to_datetime(df_hourly["timestamp"]).isin(timestamps_existentes)].copy()
 
-    logger.info("Persistencia completada en 'weather_hourly': %d filas procesadas/actualizadas.", len(records))
-    return rowcount
+    # 3. Insertar filas nuevas usando to_sql de pandas
+    if not df_nuevos.empty:
+        df_nuevos.to_sql("weather_hourly", con=engine, if_exists="append", index=False)
+        print(f"[LOAD] Se insertaron {len(df_nuevos)} nuevos registros en 'weather_hourly'.")
+        return len(df_nuevos)
+    else:
+        print("[LOAD] Todos los registros horarios ya estaban en la base de datos. Ninguno duplicado.")
+        return 0
 
 
-def load_weather_daily_summary(engine: Engine, df_daily: pd.DataFrame) -> int:
+def load_weather_daily_summary(engine, df_daily):
     """
-    Carga resúmenes diarios agregados en la tabla 'weather_daily_summary' de manera IDEMPOTENTE.
-    Utiliza SQLite UPSERT (ON CONFLICT (city, date) DO UPDATE) para evitar duplicados.
+    Carga resúmenes diarios en la tabla 'weather_daily_summary'.
+    Evita duplicar resúmenes de fechas que ya fueron cargadas previamente.
     """
     if df_daily.empty:
-        logger.warning("df_daily está vacío. No hay resúmenes para cargar.")
+        print("[LOAD] df_daily está vacío. Nada que cargar.")
         return 0
 
-    records: List[Dict[str, Any]] = df_daily.to_dict(orient="records")
+    ciudad = df_daily["city"].iloc[0]
 
-    stmt = sqlite_upsert(WeatherDailySummary).values(records)
-    upsert_stmt = stmt.on_conflict_do_update(
-        index_elements=["city", "date"],
-        set_={
-            "temp_min_c": stmt.excluded.temp_min_c,
-            "temp_max_c": stmt.excluded.temp_max_c,
-            "temp_avg_c": stmt.excluded.temp_avg_c,
-            "total_precipitation_mm": stmt.excluded.total_precipitation_mm,
-            "avg_wind_speed_kmh": stmt.excluded.avg_wind_speed_kmh,
-            "rainy_hours_count": stmt.excluded.rainy_hours_count,
-            "ingested_at": stmt.excluded.ingested_at,
-        }
-    )
+    # 1. Consultar fechas que ya tienen resumen guardado
+    with engine.connect() as conn:
+        query = text("SELECT date FROM weather_daily_summary WHERE city = :city")
+        resultado = conn.execute(query, {"city": ciudad}).fetchall()
+        fechas_existentes = set(str(fila[0])[:10] for fila in resultado)
 
-    with engine.begin() as conn:
-        result = conn.execute(upsert_stmt)
-        rowcount = result.rowcount
+    # 2. Filtrar fechas nuevas
+    df_nuevos = df_daily[~df_daily["date"].astype(str).isin(fechas_existentes)].copy()
 
-    logger.info("Persistencia completada en 'weather_daily_summary': %d resúmenes procesados/actualizados.", len(records))
-    return rowcount
+    # 3. Insertar resúmenes nuevos
+    if not df_nuevos.empty:
+        df_nuevos.to_sql("weather_daily_summary", con=engine, if_exists="append", index=False)
+        print(f"[LOAD] Se insertaron {len(df_nuevos)} nuevos resúmenes en 'weather_daily_summary'.")
+        return len(df_nuevos)
+    else:
+        print("[LOAD] Todos los resúmenes diarios ya existían en la base de datos. Ninguno duplicado.")
+        return 0
 
 
-def get_persistence_metrics(engine: Engine) -> Dict[str, Any]:
+def get_persistence_metrics(engine):
     """
-    Consulta métricas de control y verificación de la base de datos persistida.
+    Consulta métricas simples para verificar el estado de la base de datos.
     """
-    with Session(engine) as session:
-        hourly_count = session.scalar(select(func.count(WeatherHourly.id)))
-        daily_count = session.scalar(select(func.count(WeatherDailySummary.id)))
-        
-        # Muestra del último registro diario
-        last_daily = session.scalars(
-            select(WeatherDailySummary).order_by(WeatherDailySummary.date.desc()).limit(1)
-        ).first()
+    with engine.connect() as conn:
+        total_horarios = conn.execute(text("SELECT COUNT(*) FROM weather_hourly")).scalar()
+        total_diarios = conn.execute(text("SELECT COUNT(*) FROM weather_daily_summary")).scalar()
 
     return {
-        "total_hourly_records": hourly_count,
-        "total_daily_summaries": daily_count,
-        "latest_daily_summary": last_daily
+        "total_hourly_records": total_horarios or 0,
+        "total_daily_summaries": total_diarios or 0
     }
