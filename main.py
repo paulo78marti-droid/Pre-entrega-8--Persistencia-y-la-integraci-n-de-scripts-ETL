@@ -1,19 +1,18 @@
 """
-====================================================================
-Pipeline ETL Meteorológico
-Pre-entrega: Persistencia y la integración de scripts ETL
-Curso: Coderhouse - Data Science II
-====================================================================
-Este script orquesta el flujo completo de:
-1. Extracción de datos desde la API pública de Open-Meteo.
-2. Transformación y limpieza de datos usando Pandas.
-3. Carga y persistencia en una base de datos local SQLite con SQLAlchemy.
-====================================================================
+Script Principal del Pipeline ETL
+Curso: Data Science II - Coderhouse
+
+Ejecuta el flujo completo:
+1. Conexión y preparación de la base de datos SQLite.
+2. Extracción de datos climáticos desde la API Open-Meteo.
+3. Transformación y limpieza con Pandas.
+4. Carga y persistencia sin duplicados.
+5. Resumen de registros guardados.
 """
 import sys
 from pathlib import Path
 
-# Asegurar que Python reconozca las carpetas del proyecto
+# Asegurar que Python reconozca la raíz del proyecto
 sys.path.append(str(Path(__file__).resolve().parent))
 
 from config import settings
@@ -28,53 +27,45 @@ from src.load import (
 )
 
 
-def run_pipeline():
-    """
-    Función principal que ejecuta secuencialmente todas las etapas del ETL.
-    """
-    print("=" * 65)
-    print(" INICIANDO PIPELINE ETL DE CLIMA (Coderhouse Data Science II)")
+def main():
+    print("=" * 60)
+    print(" INICIO DEL PIPELINE ETL - DATA SCIENCE II")
     print(f" Ciudad: {settings.CITY_NAME}")
-    print(f" Base de Datos: {settings.DATABASE_URL}")
-    print("=" * 65)
+    print(f" Base de Datos: SQLite ({settings.DB_FILE.name})")
+    print("=" * 60)
 
     try:
-        # Paso 1: Configurar la base de datos y crear tablas
-        print("\n[PASO 1] Conectando a SQLite y verificando tablas...")
+        # 1. Preparar la Base de Datos
+        print("\n[1/4] Inicializando base de datos SQLite...")
         engine = get_db_engine()
         initialize_database(engine)
 
-        # Paso 2: Extracción (E)
-        print("\n[PASO 2] Extrayendo datos de la API pública...")
+        # 2. Extracción (Extract)
+        print("\n[2/4] Extrayendo datos desde la API del clima...")
         raw_data = extract_weather_data()
-        print("-> Extracción completada.")
 
-        # Paso 3: Transformación (T)
-        print("\n[PASO 3] Limpiando datos y calculando agregaciones...")
+        # 3. Transformación (Transform)
+        print("\n[3/4] Limpiando datos y calculando métricas con Pandas...")
         df_hourly, df_daily = transform_weather_data(raw_data, city=settings.CITY_NAME)
-        print("-> Transformación completada.")
 
-        # Paso 4: Carga y Persistencia (L)
-        print("\n[PASO 4] Cargando datos en la base de datos local SQLite...")
+        # 4. Carga (Load)
+        print("\n[4/4] Guardando datos en SQLite (evitando duplicados)...")
         load_weather_hourly(engine, df_hourly)
         load_weather_daily_summary(engine, df_daily)
-        print("-> Carga completada.")
 
-        # Paso 5: Métricas de control
-        print("\n[PASO 5] Verificando métricas de persistencia...")
+        # Resumen final
         metricas = get_persistence_metrics(engine)
-        print("-" * 65)
-        print(" RESUMEN EN BASE DE DATOS:")
-        print(f"  - Total registros en 'weather_hourly': {metricas['total_hourly_records']}")
-        print(f"  - Total resúmenes en 'weather_daily_summary': {metricas['total_daily_summaries']}")
-        print("-" * 65)
-
-        print("\n¡Pipeline ETL finalizado con éxito!")
+        print("\n" + "-" * 60)
+        print(" ESTADO DE LA BASE DE DATOS:")
+        print(f"  • Registros horarios en 'weather_hourly': {metricas['total_hourly_records']}")
+        print(f"  • Días resumidos en 'weather_daily_summary': {metricas['total_daily_summaries']}")
+        print("-" * 60)
+        print(" ¡Pipeline ETL ejecutado con éxito!\n")
 
     except Exception as error:
-        print(f"\n[ERROR] Ocurrió un problema durante la ejecución: {error}")
+        print(f"\n[ERROR] Ocurrió un fallo en el pipeline: {error}")
         sys.exit(1)
 
 
 if __name__ == "__main__":
-    run_pipeline()
+    main()

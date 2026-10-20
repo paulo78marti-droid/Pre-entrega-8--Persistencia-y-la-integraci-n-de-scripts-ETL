@@ -1,18 +1,20 @@
 """
 Modelos de Base de Datos con SQLAlchemy 2.0
-Módulo 9: Automatización y Patrones de Datos (Coderhouse)
+Curso: Data Science II - Coderhouse
+
+Define las dos tablas para almacenar los datos del clima en SQLite.
 """
 from datetime import datetime, date
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy import String, Integer, Float, Boolean, DateTime, Date
 
 
-# Clase base para definir tablas con el ORM de SQLAlchemy 2.0
+# Clase Base de SQLAlchemy 2.0
 class Base(DeclarativeBase):
     pass
 
 
-# 1. Tabla de mediciones horarias
+# 1. Tabla para mediciones horarias
 class WeatherHourly(Base):
     __tablename__ = "weather_hourly"
 
@@ -28,10 +30,10 @@ class WeatherHourly(Base):
     ingested_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
     def __repr__(self):
-        return f"<WeatherHourly(city='{self.city}', fecha='{self.timestamp}', temp={self.temperature_c}°C)>"
+        return f"<WeatherHourly(city='{self.city}', timestamp='{self.timestamp}', temp={self.temperature_c}°C)>"
 
 
-# 2. Tabla de resumen diario (KPIs acumulados)
+# 2. Tabla para el resumen diario agregado
 class WeatherDailySummary(Base):
     __tablename__ = "weather_daily_summary"
 
@@ -47,4 +49,4 @@ class WeatherDailySummary(Base):
     ingested_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
     def __repr__(self):
-        return f"<WeatherDailySummary(city='{self.city}', fecha='{self.date}', temp_media={self.temp_avg_c}°C)>"
+        return f"<WeatherDailySummary(city='{self.city}', date='{self.date}', temp_avg={self.temp_avg_c}°C)>"

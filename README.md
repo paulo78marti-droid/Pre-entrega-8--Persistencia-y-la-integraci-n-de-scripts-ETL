@@ -1,155 +1,86 @@
-# Pipeline ETL Meteorológico con Persistencia en SQLite y SQLAlchemy
+# Pipeline ETL de Datos Meteorológicos con SQLite y SQLAlchemy
 
-**Curso:** Data Science II - Coderhouse  
-**Entregable:** Pre-entrega 8 — Persistencia y la integración de scripts ETL (Módulo 9)  
+**Curso:** Data Science II — Coderhouse  
+**Entrega:** Pre-entrega — Persistencia y la integración de scripts ETL (Módulo 9, pág. 187)  
+**Estudiante:** Paulo Martin  
 
 ---
 
 ## 1. Descripción del Proyecto
 
-Este proyecto implementa un flujo automatizado de extracción, transformación y carga (**ETL**) de datos meteorológicos a nivel principiante, cumpliendo con todos los requisitos solicitados en la pre-entrega:
+El objetivo de esta pre-entrega es implementar un pipeline de datos automatizado que realice las tres etapas de un proceso **ETL (Extract, Transform, Load)**:
 
-1. **Extracción (Extract):** Conecta con una fuente de datos pública (la **API Open-Meteo** para la ciudad de Buenos Aires) y almacena una copia de los datos crudos en formato JSON en una carpeta de transición (**Staging Area**).
-2. **Transformación (Transform):** Limpia los datos usando **Pandas**, trata los valores nulos, ajusta tipos de datos (fechas), genera nuevas variables (clasificación del viento y lluvia) y calcula un resumen analítico diario.
-3. **Carga y Persistencia (Load):** Conecta y almacena los datos procesados en una base de datos local **SQLite** utilizando **SQLAlchemy**.
-4. **Prevención de Duplicados:** Implementa una lógica sencilla para evitar insertar registros repetidos si el script se ejecuta más de una vez.
-5. **Consultas SQL:** Incluye un script de verificación que ejecuta consultas SQL para analizar la información guardada.
+1. **Extracción (Extract):** Consume datos meteorológicos en tiempo real desde la API pública y gratuita de [Open-Meteo](https://open-meteo.com/) para la ciudad de Buenos Aires.
+2. **Transformación (Transform):** Utiliza **Pandas** para limpiar valores nulos, convertir tipos de datos (fechas a `datetime`), generar nuevas variables útiles (*feature engineering*) y calcular un resumen analítico diario.
+3. **Carga y Persistencia (Load):** Almacena la información de forma estructurada en una base de datos local **SQLite** utilizando el ORM **SQLAlchemy 2.0**, implementando una lógica para **evitar duplicados** si el script se ejecuta varias veces.
 
 ---
 
-## 2. Estructura del Repositorio
+## 2. Estructura del Proyecto
 
-El proyecto está organizado de forma modular para separar claramente las responsabilidades:
+El repositorio está organizado de forma modular para separar cada paso del proceso:
 
 ```text
 Pre-entrega 8- Persistencia y la integración de scripts ETL/
 │
 ├── config/
 │   ├── __init__.py
-│   └── settings.py          # Configuración básica (rutas, coordenadas y variables)
+│   └── settings.py          # Configuración del proyecto (rutas, coordenadas y BD)
 │
 ├── data/
-│   ├── raw/                 # Staging Area para guardar el JSON crudo
-│   │   ├── .gitkeep
-│   │   └── weather_raw_latest.json
-│   └── weather_analytics.db # Base de datos SQLite (se genera al ejecutar)
+│   ├── raw/                 # Carpeta para guardar los datos crudos de la API (Staging)
+│   │   └── .gitkeep
+│   └── weather_analytics.db # Base de datos local SQLite (se crea al ejecutar)
 │
 ├── sql/
-│   └── create_tables.sql    # Script DDL en SQL para crear las tablas e índices
+│   └── create_tables.sql    # Script DDL en SQL para la creación de tablas e índices
 │
 ├── src/
 │   ├── __init__.py
-│   ├── models.py            # Definición de tablas con SQLAlchemy (Mapeo ORM)
-│   ├── extract.py           # Función para consultar la API y guardar en raw
-│   ├── transform.py         # Limpieza, conversión de fechas y resumen diario con Pandas
-│   └── load.py              # Funciones para conectar a SQLite y guardar sin duplicar
+│   ├── models.py            # Modelos de tablas con SQLAlchemy 2.0
+│   ├── extract.py           # Extracción desde la API Open-Meteo
+│   ├── transform.py         # Limpieza, conversión de fechas y resumen con Pandas
+│   └── load.py              # Carga en SQLite y lógica para no duplicar datos
 │
-├── main.py                  # Script principal que ejecuta el pipeline ETL completo
-├── verify_persistence.py    # Script para comprobar y consultar los datos con SQL
-├── requirements.txt         # Lista de dependencias necesarias (pip)
-├── .env.example             # Ejemplo de variables de entorno configurables
-├── .gitignore               # Archivos excluidos del repositorio (bases de datos, caches)
+├── main.py                  # Script principal que ejecuta el pipeline completo
+├── verify_persistence.py    # Script para consultar y verificar los datos con SQL
+├── requirements.txt         # Librerías necesarias para ejecutar el proyecto
+├── .env.example             # Ejemplo de variables de configuración opcionales
+├── .gitignore               # Archivos excluidos del repositorio (BD local y temporales)
 └── README.md                # Documentación del proyecto
 ```
 
 ---
 
-## 3. Flujo del Pipeline (ETL)
+## 3. Requisitos del Entorno
 
-El flujo se divide en tres pasos secuenciales orquestados desde `main.py`:
-
-```mermaid
-flowchart LR
-    A[API Open-Meteo] -->|GET requests| B[Staging: data/raw/weather_raw_latest.json]
-    B -->|Pandas| C[Limpieza y Feature Engineering]
-    C -->|df_hourly y df_daily| D[SQLAlchemy + SQLite]
-    D -->|Carga sin duplicados| E[(weather_analytics.db)]
-```
-
-### Paso 1: Extracción (`src/extract.py`)
-- Realiza una consulta HTTP GET a la API gratuita de Open-Meteo para obtener datos horarios de los últimos 7 días y el pronóstico de los próximos 3 días.
-- Guarda la respuesta cruda en `data/raw/weather_raw_latest.json`. Esto cumple con el patrón de **Staging Area** (área de transición), garantizando que tengamos un respaldo de los datos tal como llegaron de la fuente.
-- Si no hay conexión a internet, el script detecta el error y carga automáticamente el último archivo guardado en Staging para que el proceso no se interrumpa.
-
-### Paso 2: Transformación (`src/transform.py`)
-- Convierte el diccionario JSON en un DataFrame de Pandas.
-- Convierte la columna de texto de fecha/hora en tipo `datetime` (`pd.to_datetime`).
-- **Tratamiento de nulos:**
-  - Descarta filas donde falte la fecha o la temperatura (datos esenciales no recuperables).
-  - Rellena valores nulos de precipitación con `0.0` (asumiendo ausencia de lluvia).
-  - Rellena humedad faltante con la mediana de la columna.
-- **Feature Engineering (Nuevas columnas):**
-  - `wind_category`: Clasifica la velocidad del viento en categorías comprensibles (*Calma / Viento Leve*, *Brisa Moderada*, *Viento Fuerte*, *Temporal*).
-  - `is_rainy`: Variable booleana (`True` / `False`) que indica si hubo precipitación mayor a 0 mm.
-  - `ingested_at`: Fecha y hora exacta de procesamiento.
-- **Resumen Diario Agregado:**
-  - Agrupa por `city` y `date` para calcular: temperatura mínima, temperatura máxima, temperatura promedio, lluvia acumulada del día y velocidad promedio del viento.
-
-### Paso 3: Carga y Persistencia (`src/load.py`)
-- Crea el motor de base de datos con `create_engine()` de SQLAlchemy.
-- Crea las tablas automáticamente si no existen (`Base.metadata.create_all()`).
-- Guarda los datos en dos tablas: `weather_hourly` (mediciones por hora) y `weather_daily_summary` (resumen diario).
-- **Evita duplicados:** Antes de guardar, consulta qué fechas u horas ya existen en la base de datos. Solo inserta las filas nuevas mediante `df.to_sql(..., if_exists="append")`.
+Para ejecutar este proyecto necesitas:
+- **Python 3.10 o superior** instalado.
+- Las librerías indicadas en `requirements.txt`:
+  - `requests` (para consultar la API)
+  - `pandas` (para la limpieza y transformación de datos)
+  - `sqlalchemy` (para interactuar y persistir en la base de datos)
+  - `python-dotenv` (para leer variables de entorno si se configuran)
 
 ---
 
-## 4. Esquema de Base de Datos (DDL)
+## 4. Pasos para Ejecutar
 
-El diseño relacional se compone de dos tablas en SQLite:
-
-### Tabla 1: `weather_hourly` (Mediciones Horarias)
-| Columna | Tipo SQL | Descripción |
-| :--- | :--- | :--- |
-| `id` | `INTEGER PRIMARY KEY` | Identificador único autoincremental |
-| `city` | `VARCHAR(50)` | Nombre de la ciudad (ej: Buenos Aires) |
-| `timestamp` | `DATETIME` | Fecha y hora de la medición |
-| `temperature_c` | `REAL` | Temperatura registrada en °C |
-| `humidity_pct` | `REAL` | Porcentaje de humedad relativa |
-| `precipitation_mm` | `REAL` | Milímetros de lluvia caída |
-| `wind_speed_kmh` | `REAL` | Velocidad del viento en km/h |
-| `wind_category` | `VARCHAR(30)` | Categoría del viento (ej: Brisa Moderada) |
-| `is_rainy` | `BOOLEAN` | Si hubo lluvia (True/False) |
-| `ingested_at` | `DATETIME` | Fecha y hora en que se guardó en la base |
-
-### Tabla 2: `weather_daily_summary` (Resumen Diario Agregado)
-| Columna | Tipo SQL | Descripción |
-| :--- | :--- | :--- |
-| `id` | `INTEGER PRIMARY KEY` | Identificador único autoincremental |
-| `city` | `VARCHAR(50)` | Ciudad |
-| `date` | `DATE` | Fecha del día analizado |
-| `temp_min_c` | `REAL` | Temperatura mínima del día (°C) |
-| `temp_max_c` | `REAL` | Temperatura máxima del día (°C) |
-| `temp_avg_c` | `REAL` | Temperatura promedio del día (°C) |
-| `total_precipitation_mm` | `REAL` | Lluvia total acumulada en el día (mm) |
-| `avg_wind_speed_kmh` | `REAL` | Velocidad media del viento (km/h) |
-| `rainy_hours_count` | `INTEGER` | Cantidad de horas con lluvia en el día |
-| `ingested_at` | `DATETIME` | Fecha y hora de procesamiento |
-
-El script SQL completo para crear estas tablas se encuentra en [`sql/create_tables.sql`](sql/create_tables.sql).
-
----
-
-## 5. Requisitos y Configuración del Entorno
-
-### Requisitos previos
-- Python 3.10 o superior instalado.
-- Gestor de paquetes `pip`.
-
-### Paso 1: Clonar o descargar el repositorio
+### Paso 1: Clonar el repositorio
 ```bash
-git clone <URL_DEL_REPOSITORIO>
-cd "Pre-entrega 8- Persistencia y la integración de scripts ETL"
+git clone https://github.com/paulo78marti-droid/Pre-entrega-8--Persistencia-y-la-integraci-n-de-scripts-ETL.git
+cd "Pre-entrega-8--Persistencia-y-la-integraci-n-de-scripts-ETL"
 ```
 
-### Paso 2: Crear y activar un entorno virtual
+### Paso 2: Crear y activar un entorno virtual (recomendado)
 
-**En Windows (PowerShell):**
+**En Windows:**
 ```powershell
 python -m venv venv
-.\venv\Scripts\Activate.ps1
+.\venv\Scripts\activate
 ```
 
-**En Linux / macOS:**
+**En Linux / Mac:**
 ```bash
 python3 -m venv venv
 source venv/bin/activate
@@ -160,87 +91,108 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Paso 4: Variables de entorno (Opcional)
-El proyecto incluye un archivo `.env.example`. Si deseas personalizar la ciudad o coordenadas, puedes crear un archivo `.env`:
-```bash
-cp .env.example .env
-```
-*(Si no creas el archivo `.env`, el sistema usará automáticamente los valores por defecto de Buenos Aires definidos en `config/settings.py`)*.
-
----
-
-## 6. Pasos para Ejecutar
-
-### 1. Ejecutar el Pipeline ETL
-Para iniciar el proceso completo de extracción, limpieza y carga en la base de datos:
+### Paso 4: Ejecutar el Pipeline ETL
+Ejecuta el script principal:
 ```bash
 python main.py
 ```
 
-**Salida en consola:**
-```text
-=================================================================
- INICIANDO PIPELINE ETL DE CLIMA (Coderhouse Data Science II)
- Ciudad: Buenos Aires
- Base de Datos: sqlite:///.../data/weather_analytics.db
-=================================================================
+**¿Qué verás en la consola?**
+1. La conexión a SQLite y la verificación/creación de las tablas.
+2. La descarga de datos de la API del clima y su guardado en `data/raw/weather_raw_latest.json`.
+3. La limpieza y el cálculo del resumen diario con Pandas.
+4. La inserción de las filas en la base de datos `data/weather_analytics.db`.
+5. Un resumen con el total de registros almacenados.
 
-[PASO 1] Conectando a SQLite y verificando tablas...
-[DB] Verificando esquema de tablas en SQLite...
-[DB] Tablas verificadas exitosamente.
-
-[PASO 2] Extrayendo datos de la API pública...
-[EXTRACT] Consultando API Open-Meteo para Buenos Aires...
-[EXTRACT] Datos crudos guardados correctamente en Staging: weather_raw_latest.json
--> Extracción completada.
-
-[PASO 3] Limpiando datos y calculando agregaciones...
-[TRANSFORM] Filas crudas recibidas: 240
-[TRANSFORM] Transformación completada: 240 registros horarios y 10 resúmenes diarios.
--> Transformación completada.
-
-[PASO 4] Cargando datos en la base de datos local SQLite...
-[LOAD] Se insertaron 240 nuevos registros en 'weather_hourly'.
-[LOAD] Se insertaron 10 nuevos resúmenes en 'weather_daily_summary'.
--> Carga completada.
-
-[PASO 5] Verificando métricas de persistencia...
------------------------------------------------------------------
- RESUMEN EN BASE DE DATOS:
-  - Total registros en 'weather_hourly': 240
-  - Total resúmenes en 'weather_daily_summary': 10
------------------------------------------------------------------
-
-¡Pipeline ETL finalizado con éxito!
-```
-
-### 2. Probar la prevención de duplicados (Idempotencia)
-Si vuelves a ejecutar inmediatamente el pipeline:
+### Paso 5: Probar la prevención de duplicados
+Si vuelves a ejecutar:
 ```bash
 python main.py
 ```
-El script detectará que esos días ya fueron guardados y no duplicará ningún registro:
-```text
-[LOAD] Todos los registros horarios ya estaban en la base de datos. Ninguno duplicado.
-[LOAD] Todos los resúmenes diarios ya existían en la base de datos. Ninguno duplicado.
-```
+El script detectará automáticamente que esos datos ya existen en SQLite y no insertará filas duplicadas.
 
-### 3. Verificar y consultar la base de datos con SQL
-Para auditar la base de datos y correr consultas analíticas:
+### Paso 6: Consultar la base de datos con SQL
+Para auditar la base de datos y ver los datos guardados:
 ```bash
 python verify_persistence.py
 ```
-
-Este script ejecutará consultas como:
-- Conteo total de filas en ambas tablas.
+Este script ejecuta consultas SQL analíticas sobre la base de datos:
 - Top 5 horas con mayor temperatura registrada.
-- Resumen de días con precipitaciones acumuladas.
-- Agrupación de horas por categoría de viento.
+- Días con registro de lluvias acumuladas.
+- Horas acumuladas según la intensidad del viento.
+
+---
+
+## 5. Explicación del Flujo ETL
+
+### 1. Extracción (`src/extract.py`)
+- Realiza una petición `GET` con `requests` a la API de Open-Meteo pidiendo temperatura, humedad, lluvia y viento.
+- Guarda una copia cruda del JSON en `data/raw/weather_raw_latest.json`. Esto sirve como **área de transición (staging)** para tener el respaldo exacto de lo recibido.
+- Incluye control de excepciones: si no hay conexión a internet y existe un archivo previo en `data/raw/`, lo reutiliza para no cortar el flujo.
+
+### 2. Transformación (`src/transform.py`)
+- Pasa los datos JSON a un `DataFrame` de Pandas.
+- Convierte la columna de fecha a tipo `datetime`.
+- **Tratamiento de nulos:**
+  - Descarta filas que no tengan fecha o temperatura (datos indispensables).
+  - Rellena valores nulos de lluvia con `0.0 mm`.
+  - Rellena valores nulos de humedad con la mediana de la columna.
+- **Nuevas variables:**
+  - `wind_category`: Clasifica el viento en *Leve*, *Moderado* o *Fuerte*.
+  - `is_rainy`: Booleano (`True`/`False`) que indica si hubo precipitación.
+- **Resumen diario:** Agrupa por fecha y calcula la temperatura mínima, máxima, promedio y la lluvia total de cada día.
+
+### 3. Carga y Persistencia (`src/load.py` y `src/models.py`)
+- Conecta con SQLite mediante `create_engine` de SQLAlchemy.
+- Crea las tablas a partir de los modelos de SQLAlchemy 2.0.
+- Guarda los datos usando `to_sql(..., if_exists="append")`.
+- **Control de duplicados:** Antes de insertar, consulta los registros que ya existen en la base y únicamente inserta las filas nuevas.
+
+---
+
+## 6. Esquema de la Base de Datos (DDL)
+
+El diseño cuenta con dos tablas en SQLite:
+
+### Tabla: `weather_hourly` (Mediciones por hora)
+| Campo | Tipo SQL | Descripción |
+| :--- | :--- | :--- |
+| `id` | `INTEGER PRIMARY KEY` | Identificador autoincremental |
+| `city` | `VARCHAR(50)` | Nombre de la ciudad |
+| `timestamp` | `DATETIME` | Fecha y hora de la medición |
+| `temperature_c` | `REAL` | Temperatura en °C |
+| `humidity_pct` | `REAL` | Porcentaje de humedad |
+| `precipitation_mm` | `REAL` | Milímetros de lluvia |
+| `wind_speed_kmh` | `REAL` | Velocidad del viento en km/h |
+| `wind_category` | `VARCHAR(30)` | Categoría del viento (Leve, Moderado, Fuerte) |
+| `is_rainy` | `BOOLEAN` | Si hubo lluvia (True/False) |
+| `ingested_at` | `DATETIME` | Fecha y hora de carga |
+
+### Tabla: `weather_daily_summary` (Resumen por día)
+| Campo | Tipo SQL | Descripción |
+| :--- | :--- | :--- |
+| `id` | `INTEGER PRIMARY KEY` | Identificador autoincremental |
+| `city` | `VARCHAR(50)` | Nombre de la ciudad |
+| `date` | `DATE` | Fecha del día |
+| `temp_min_c` | `REAL` | Temperatura mínima del día |
+| `temp_max_c` | `REAL` | Temperatura máxima del día |
+| `temp_avg_c` | `REAL` | Temperatura promedio del día |
+| `total_precipitation_mm` | `REAL` | Lluvia acumulada en el día |
+| `avg_wind_speed_kmh` | `REAL` | Velocidad media del viento |
+| `rainy_hours_count` | `INTEGER` | Cantidad de horas con lluvia |
+| `ingested_at` | `DATETIME` | Fecha y hora de carga |
+
+El script SQL nativo con las sentencias `CREATE TABLE` e índices se encuentra en [`sql/create_tables.sql`](sql/create_tables.sql).
 
 ---
 
 ## 7. Justificación de Decisiones Técnicas
 
-- **¿Por qué SQLite?** SQLite es una base de datos relacional ligera que almacena todo en un único archivo local (`.db`). No requiere instalar un servidor externo, lo que facilita la reproducibilidad del proyecto en cualquier computadora.
-- **¿Por qué SQLAlchemy?** Es el estándar de la industria en Python para comunicarse con bases de datos relacionales, proporcionando tanto creación de tablas mediante modelos (ORM) como ejecución segura de consultas SQL.
-- **¿Por qué Staging Area?** Guardar el archivo JSON crudo en `data/raw/` permite aislar los datos originales de cualquier manipulación y garantiza que el pipeline pueda volver a ejecutarse aunque la API externa esté temporalmente caída.
+- **¿Por qué SQLite?**  
+  Porque es una base de datos relacional que funciona en un único archivo local (`.db`), sin necesidad de instalar ni configurar servidores externos, facilitando que cualquiera pueda clonar y ejecutar el proyecto sin problemas.
+
+- **¿Por qué SQLAlchemy?**  
+  Porque es la librería estándar en Python para interactuar con bases de datos relacionales, permitiendo crear tablas mediante código Python limpio y ejecutar consultas SQL de forma segura.
+
+- **¿Por qué guardar una copia cruda (Staging)?**  
+  Guardar el JSON original en `data/raw/` permite auditar los datos de origen tal como llegaron y garantiza poder volver a procesarlos ante cualquier cambio o fallo de conexión.
