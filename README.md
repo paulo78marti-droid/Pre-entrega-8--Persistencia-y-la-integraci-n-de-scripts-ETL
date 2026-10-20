@@ -4,6 +4,8 @@
 **Entrega:** Pre-entrega — Persistencia y la integración de scripts ETL (Módulo 9, pág. 187)  
 **Estudiante:** Paulo Martin  
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/paulo78marti-droid/Pre-entrega-8--Persistencia-y-la-integraci-n-de-scripts-ETL/blob/master/Pre-entrega_8_ETL.ipynb)
+
 ---
 
 ## 1. Descripción del Proyecto
@@ -23,6 +25,7 @@ El repositorio está organizado de forma modular para separar cada paso del proc
 ```text
 Pre-entrega 8- Persistencia y la integración de scripts ETL/
 │
+├── Pre-entrega_8_ETL.ipynb  # Cuaderno interactivo listo para ejecutar en Google Colab
 ├── config/
 │   ├── __init__.py
 │   └── settings.py          # Configuración del proyecto (rutas, coordenadas y BD)
