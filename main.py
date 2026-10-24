@@ -1,71 +1,72 @@
 """
 Script Principal del Pipeline ETL
 Curso: Data Science II - Coderhouse
+Pre-entrega: Persistencia y la integracion de scripts ETL
 
-Ejecuta el flujo completo:
-1. Conexión y preparación de la base de datos SQLite.
-2. Extracción de datos climáticos desde la API Open-Meteo.
-3. Transformación y limpieza con Pandas.
-4. Carga y persistencia sin duplicados.
-5. Resumen de registros guardados.
+Ejecuta el flujo completo de automatizacion:
+1. Conectar y preparar la base de datos SQLite con SQLAlchemy 2.0.
+2. Extraccion del dataset de Calidad del Aire (Kaggle / Staging).
+3. Transformacion y limpieza con Pandas (correccion de negativos, categorias y resumen).
+4. Carga y persistencia en SQLite evitando duplicados.
+5. Reporte de metricas persistidas.
 """
 import sys
 from pathlib import Path
 
-# Asegurar que Python reconozca la raíz del proyecto
+# Asegurar que Python reconozca la raiz del proyecto
 sys.path.append(str(Path(__file__).resolve().parent))
 
 from config import settings
-from src.extract import extract_weather_data
-from src.transform import transform_weather_data
+from src.extract import extract_air_quality_data
+from src.transform import transform_air_quality_data
 from src.load import (
     get_db_engine,
     initialize_database,
-    load_weather_hourly,
-    load_weather_daily_summary,
+    load_air_quality_measurements,
+    load_air_quality_summary,
     get_persistence_metrics
 )
 
 
-def main():
-    print("=" * 60)
-    print(" INICIO DEL PIPELINE ETL - DATA SCIENCE II")
-    print(f" Ciudad: {settings.CITY_NAME}")
-    print(f" Base de Datos: SQLite ({settings.DB_FILE.name})")
-    print("=" * 60)
+def run_pipeline():
+    print("=" * 65)
+    print(" PIPELINE ETL: CALIDAD DEL AIRE (DATA SCIENCE II - CODERHOUSE)")
+    print(f" Fuente: Kaggle ({settings.KAGGLE_DATASET})")
+    print(f" Destino: SQLite ({settings.DB_FILE.name})")
+    print("=" * 65)
 
     try:
-        # 1. Preparar la Base de Datos
-        print("\n[1/4] Inicializando base de datos SQLite...")
+        # Paso 1: Inicializar la base de datos local
+        print("\n[Paso 1/4] Inicializando base de datos SQLite...")
         engine = get_db_engine()
         initialize_database(engine)
 
-        # 2. Extracción (Extract)
-        print("\n[2/4] Extrayendo datos desde la API del clima...")
-        raw_data = extract_weather_data()
+        # Paso 2: Extraccion (Extract)
+        print("\n[Paso 2/4] Extrayendo datos desde Kaggle / Staging...")
+        df_raw = extract_air_quality_data()
 
-        # 3. Transformación (Transform)
-        print("\n[3/4] Limpiando datos y calculando métricas con Pandas...")
-        df_hourly, df_daily = transform_weather_data(raw_data, city=settings.CITY_NAME)
+        # Paso 3: Transformacion (Transform)
+        print("\n[Paso 3/4] Limpiando datos y calculando resumen con Pandas...")
+        df_measurements, df_summary = transform_air_quality_data(df_raw)
 
-        # 4. Carga (Load)
-        print("\n[4/4] Guardando datos en SQLite (evitando duplicados)...")
-        load_weather_hourly(engine, df_hourly)
-        load_weather_daily_summary(engine, df_daily)
+        # Paso 4: Carga y Persistencia (Load)
+        print("\n[Paso 4/4] Guardando datos en SQLite (controlando duplicados)...")
+        load_air_quality_measurements(engine, df_measurements)
+        load_air_quality_summary(engine, df_summary)
 
-        # Resumen final
+        # Metricas finales de persistencia
         metricas = get_persistence_metrics(engine)
-        print("\n" + "-" * 60)
-        print(" ESTADO DE LA BASE DE DATOS:")
-        print(f"  • Registros horarios en 'weather_hourly': {metricas['total_hourly_records']}")
-        print(f"  • Días resumidos en 'weather_daily_summary': {metricas['total_daily_summaries']}")
-        print("-" * 60)
-        print(" ¡Pipeline ETL ejecutado con éxito!\n")
+        print("\n" + "-" * 65)
+        print(" ESTADO DE PERSISTENCIA EN SQLITE:")
+        print(f"  • Registros en 'air_quality_measurements': {metricas['total_measurements']}")
+        print(f"  • Grupos en 'air_quality_summary':       {metricas['total_summary_groups']}")
+        print("-" * 65)
+        print(" [OK] Pipeline ETL ejecutado exitosamente.\n")
 
     except Exception as error:
-        print(f"\n[ERROR] Ocurrió un fallo en el pipeline: {error}")
+        print(f"\n[ERROR] Ocurrio una falla en el pipeline: {error}")
         sys.exit(1)
 
 
 if __name__ == "__main__":
-    main()
+    run_pipeline()

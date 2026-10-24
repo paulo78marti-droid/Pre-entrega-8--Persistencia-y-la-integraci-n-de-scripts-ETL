@@ -1,57 +1,58 @@
 """
-Módulo de Extracción (ETL)
-Consume la API pública de clima Open-Meteo y guarda una copia cruda (Staging Area).
+Modulo de Extraccion (ETL)
+Curso: Data Science II - Coderhouse
+
+Descarga el dataset de Calidad del Aire desde Kaggle mediante la libreria kagglehub
+y almacena una copia en la carpeta de datos crudos (patron Staging Area).
 """
-import json
-import requests
+import shutil
+from pathlib import Path
+import pandas as pd
 from config import settings
 
 
-def extract_weather_data():
+def extract_air_quality_data():
     """
-    Realiza una petición GET a la API Open-Meteo para obtener datos meteorológicos.
-    Aplica el patrón Staging Area guardando el archivo JSON en 'data/raw/'.
-    Si no hay conexión a internet, recurre al último archivo guardado localmente.
+    Descarga el dataset 'srisyra02/air-quality-dataset' usando kagglehub.
+    Guarda una copia en 'data/raw/air_quality_dataset.csv' (Staging Area).
+    Si ocurre un problema de red o conexion, utiliza la copia local de respaldo si existe.
+    
+    Retorna:
+        pd.DataFrame: DataFrame con los datos crudos extraidos.
     """
-    url = settings.API_BASE_URL
-    params = {
-        "latitude": settings.LATITUDE,
-        "longitude": settings.LONGITUDE,
-        "hourly": "temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m",
-        "timezone": settings.TIMEZONE,
-        "past_days": 7,       # Datos de los últimos 7 días
-        "forecast_days": 3    # Pronóstico de los próximos 3 días
-    }
-
-    cache_file = settings.RAW_DATA_DIR / "weather_raw_latest.json"
-
-    print(f"[EXTRACT] Consultando API Open-Meteo para {settings.CITY_NAME}...")
+    print(f"[EXTRACT] Conectando con Kaggle para descargar: '{settings.KAGGLE_DATASET}'...")
+    
+    raw_file = settings.RAW_CSV_PATH
 
     try:
-        # Petición HTTP con timeout para evitar bloqueos
-        response = requests.get(url, params=params, timeout=15)
-        response.raise_for_status()  # Lanza excepción si el código no es 200 OK
-        data = response.json()
+        import kagglehub
+        # Descargar la version mas reciente desde Kaggle
+        download_path = kagglehub.dataset_download(settings.KAGGLE_DATASET)
+        download_dir = Path(download_path)
+        
+        # Localizar el archivo CSV dentro de la carpeta descargada
+        csv_files = list(download_dir.glob("*.csv"))
+        if not csv_files:
+            raise FileNotFoundError(f"No se encontro ningun archivo .csv en la descarga de Kaggle: {download_path}")
+        
+        source_csv = csv_files[0]
+        print(f"[EXTRACT] Archivo descargado en cache: {source_csv}")
 
-        # Validar que la respuesta tenga el bloque horario esperado
-        if "hourly" not in data or "time" not in data["hourly"]:
-            raise ValueError("El JSON recibido no contiene el campo 'hourly.time'.")
+        # Patron Staging Area: Copiamos el archivo crudo a nuestra carpeta local data/raw/
+        settings.RAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_csv, raw_file)
+        print(f"[EXTRACT] Copia guardada en Staging Area: {raw_file}")
 
-        # Patrón Staging: Guardar datos crudos en la carpeta raw
-        with open(cache_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as error:
+        print(f"[ALERTA] No se pudo descargar desde Kaggle: {error}")
+        if raw_file.exists():
+            print(f"[EXTRACT] Utilizando copia de respaldo existente en: {raw_file}")
+        else:
+            raise RuntimeError(
+                f"No se pudo descargar el dataset y no existe respaldo local en '{raw_file}'."
+            ) from error
 
-        print(f"[EXTRACT] Datos crudos guardados correctamente en Staging: {cache_file.name}")
-        return data
-
-    except requests.RequestException as error:
-        print(f"[ALERTA] Error al consultar la API en vivo: {error}")
-
-        # Si falla internet o la API, usamos la copia local si existe
-        if cache_file.exists():
-            print(f"[EXTRACT] Cargando datos desde copia de respaldo local (Staging): {cache_file.name}")
-            with open(cache_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-
-        # Si no hay respaldo, relanzamos el error
-        raise error
+    # Lectura del archivo CSV crudo con Pandas
+    df_raw = pd.read_csv(raw_file)
+    print(f"[EXTRACT] Extraccion completada con exito: {len(df_raw)} filas y {len(df_raw.columns)} columnas.")
+    return df_raw

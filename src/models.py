@@ -2,51 +2,60 @@
 Modelos de Base de Datos con SQLAlchemy 2.0
 Curso: Data Science II - Coderhouse
 
-Define las dos tablas para almacenar los datos del clima en SQLite.
+Define las tablas para almacenar las mediciones de calidad del aire y el resumen analitico.
 """
-from datetime import datetime, date
+from datetime import datetime
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import String, Integer, Float, Boolean, DateTime, Date
+from sqlalchemy import String, Integer, Float, Boolean, DateTime
 
 
-# Clase Base de SQLAlchemy 2.0
+# Clase Base para los modelos declarativos de SQLAlchemy 2.0
 class Base(DeclarativeBase):
     pass
 
 
-# 1. Tabla para mediciones horarias
-class WeatherHourly(Base):
-    __tablename__ = "weather_hourly"
+class AirQualityMeasurement(Base):
+    """
+    Tabla de mediciones individuales de calidad del aire.
+    Almacena los registros limpios y normalizados.
+    """
+    __tablename__ = "air_quality_measurements"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    city: Mapped[str] = mapped_column(String(50), nullable=False)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    temperature_c: Mapped[float] = mapped_column(Float, nullable=False)
-    humidity_pct: Mapped[float] = mapped_column(Float, nullable=True)
-    precipitation_mm: Mapped[float] = mapped_column(Float, default=0.0)
-    wind_speed_kmh: Mapped[float] = mapped_column(Float, nullable=False)
-    wind_category: Mapped[str] = mapped_column(String(30), nullable=False)
-    is_rainy: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    measurement_id: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)
+    pm25: Mapped[float] = mapped_column(Float, nullable=False)
+    pm10: Mapped[float] = mapped_column(Float, nullable=False)
+    nox: Mapped[float] = mapped_column(Float, nullable=False)
+    no2: Mapped[float] = mapped_column(Float, nullable=False)
+    so2: Mapped[float] = mapped_column(Float, nullable=False)
+    vocs: Mapped[float] = mapped_column(Float, nullable=False)
+    co: Mapped[float] = mapped_column(Float, nullable=False)
+    co2: Mapped[float] = mapped_column(Float, nullable=False)
+    ch4: Mapped[float] = mapped_column(Float, nullable=False)
+    temperature: Mapped[float] = mapped_column(Float, nullable=False)
+    quality_level: Mapped[str] = mapped_column(String(30), nullable=False)
+    is_high_pollution: Mapped[bool] = mapped_column(Boolean, nullable=False)
     ingested_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
     def __repr__(self):
-        return f"<WeatherHourly(city='{self.city}', timestamp='{self.timestamp}', temp={self.temperature_c}°C)>"
+        return f"<AirQualityMeasurement(id={self.measurement_id}, PM2.5={self.pm25}, Nivel='{self.quality_level}')>"
 
 
-# 2. Tabla para el resumen diario agregado
-class WeatherDailySummary(Base):
-    __tablename__ = "weather_daily_summary"
+class AirQualitySummary(Base):
+    """
+    Tabla de resumen analitico (Data Mart) agrupado por categoria de calidad del aire.
+    """
+    __tablename__ = "air_quality_summary"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    city: Mapped[str] = mapped_column(String(50), nullable=False)
-    date: Mapped[date] = mapped_column(Date, nullable=False)
-    temp_min_c: Mapped[float] = mapped_column(Float, nullable=False)
-    temp_max_c: Mapped[float] = mapped_column(Float, nullable=False)
-    temp_avg_c: Mapped[float] = mapped_column(Float, nullable=False)
-    total_precipitation_mm: Mapped[float] = mapped_column(Float, default=0.0)
-    avg_wind_speed_kmh: Mapped[float] = mapped_column(Float, nullable=False)
-    rainy_hours_count: Mapped[int] = mapped_column(Integer, default=0)
+    quality_level: Mapped[str] = mapped_column(String(30), unique=True, nullable=False)
+    record_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    avg_pm25: Mapped[float] = mapped_column(Float, nullable=False)
+    avg_pm10: Mapped[float] = mapped_column(Float, nullable=False)
+    avg_co2: Mapped[float] = mapped_column(Float, nullable=False)
+    avg_temperature: Mapped[float] = mapped_column(Float, nullable=False)
+    max_pm25: Mapped[float] = mapped_column(Float, nullable=False)
     ingested_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
     def __repr__(self):
-        return f"<WeatherDailySummary(city='{self.city}', date='{self.date}', temp_avg={self.temp_avg_c}°C)>"
+        return f"<AirQualitySummary(Nivel='{self.quality_level}', Registros={self.record_count}, PM2.5_Prom={self.avg_pm25})>"

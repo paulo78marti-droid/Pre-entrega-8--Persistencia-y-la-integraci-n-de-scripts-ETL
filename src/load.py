@@ -1,9 +1,9 @@
 """
-Módulo de Carga y Persistencia (ETL)
+Modulo de Carga y Persistencia (ETL)
 Curso: Data Science II - Coderhouse
 
-Conecta con SQLite usando SQLAlchemy, crea las tablas si no existen
-y guarda los datos evitando duplicados si el script se vuelve a ejecutar.
+Conecta con SQLite mediante SQLAlchemy 2.0, inicializa las tablas
+y persiste las mediciones y el resumen analitico, asegurando la prevencion de duplicados.
 """
 import pandas as pd
 from sqlalchemy import create_engine, text
@@ -12,84 +12,77 @@ from src.models import Base
 
 
 def get_db_engine():
-    """Crea y retorna la conexión con la base de datos SQLite."""
+    """Crea y retorna el Engine de SQLAlchemy conectado a SQLite."""
     return create_engine(settings.DATABASE_URL)
 
 
 def initialize_database(engine):
-    """Crea las tablas en la base de datos si aún no existen."""
-    print("[LOAD] Verificando tablas en SQLite...")
+    """Crea las tablas en la base de datos si aun no existen (DDL automatizado)."""
+    print("[LOAD] Verificando esquema de tablas en SQLite...")
     Base.metadata.create_all(engine)
-    print("[LOAD] Tablas listas.")
+    print("[LOAD] Esquema de base de datos verificado y listo.")
 
 
-def load_weather_hourly(engine, df_hourly):
+def load_air_quality_measurements(engine, df_measurements):
     """
-    Inserta las mediciones horarias en 'weather_hourly'.
-    Comprueba qué timestamps ya existen para no duplicar datos.
+    Inserta las mediciones individuales en la tabla 'air_quality_measurements'.
+    Implementa logica de idempotencia para evitar registros duplicados basandose
+    en el identificador unico 'measurement_id'.
     """
-    if df_hourly.empty:
-        print("[LOAD] df_hourly no contiene datos.")
+    if df_measurements.empty:
+        print("[LOAD] El DataFrame de mediciones esta vacio.")
         return 0
 
-    ciudad = df_hourly["city"].iloc[0]
-
-    # Consultar qué fechas y horas ya están en la base de datos
+    # Consultar los identificadores que ya existen en la base de datos
     with engine.connect() as conn:
-        query = text("SELECT timestamp FROM weather_hourly WHERE city = :city")
-        filas = conn.execute(query, {"city": ciudad}).fetchall()
-        timestamps_existentes = set(pd.to_datetime(f[0]) for f in filas)
+        query = text("SELECT measurement_id FROM air_quality_measurements")
+        filas = conn.execute(query).fetchall()
+        ids_existentes = set(f[0] for f in filas)
 
-    # Filtrar solo los registros que aún no se guardaron
-    df_nuevos = df_hourly[~pd.to_datetime(df_hourly["timestamp"]).isin(timestamps_existentes)].copy()
+    # Filtrar solo registros que no esten cargados previamente
+    df_nuevos = df_measurements[~df_measurements["measurement_id"].isin(ids_existentes)].copy()
 
-    # Guardar en SQLite
     if not df_nuevos.empty:
-        df_nuevos.to_sql("weather_hourly", con=engine, if_exists="append", index=False)
-        print(f"[LOAD] Se insertaron {len(df_nuevos)} nuevos registros horarios.")
+        df_nuevos.to_sql("air_quality_measurements", con=engine, if_exists="append", index=False)
+        print(f"[LOAD] Se insertaron {len(df_nuevos)} nuevas mediciones en 'air_quality_measurements'.")
         return len(df_nuevos)
     else:
-        print("[LOAD] Todos los datos horarios ya existen en la base. Ninguno duplicado.")
+        print("[LOAD] Todas las mediciones ya existen en la base de datos. Ninguna fila duplicada.")
         return 0
 
 
-def load_weather_daily_summary(engine, df_daily):
+def load_air_quality_summary(engine, df_summary):
     """
-    Inserta los resúmenes diarios en 'weather_daily_summary'.
-    Comprueba qué fechas ya existen para no duplicar registros.
+    Carga el resumen analitico en la tabla 'air_quality_summary'.
+    Para mantener la coherencia analitica y evitar duplicidad de grupos,
+    actualiza la tabla con los valores consolidados mas recientes.
     """
-    if df_daily.empty:
-        print("[LOAD] df_daily no contiene datos.")
+    if df_summary.empty:
+        print("[LOAD] El DataFrame de resumen esta vacio.")
         return 0
 
-    ciudad = df_daily["city"].iloc[0]
+    with engine.begin() as conn:
+        # Limpieza previa del resumen para asegurar que refleje el calculo consolidado actual
+        conn.execute(text("DELETE FROM air_quality_summary"))
+        df_summary.to_sql("air_quality_summary", con=conn, if_exists="append", index=False)
 
-    # Consultar qué fechas ya tienen resumen guardado
-    with engine.connect() as conn:
-        query = text("SELECT date FROM weather_daily_summary WHERE city = :city")
-        filas = conn.execute(query, {"city": ciudad}).fetchall()
-        fechas_existentes = set(str(f[0])[:10] for f in filas)
-
-    # Filtrar solo los días nuevos
-    df_nuevos = df_daily[~df_daily["date"].astype(str).isin(fechas_existentes)].copy()
-
-    # Guardar en SQLite
-    if not df_nuevos.empty:
-        df_nuevos.to_sql("weather_daily_summary", con=engine, if_exists="append", index=False)
-        print(f"[LOAD] Se insertaron {len(df_nuevos)} nuevos resúmenes diarios.")
-        return len(df_nuevos)
-    else:
-        print("[LOAD] Todos los resúmenes diarios ya existen en la base. Ninguno duplicado.")
-        return 0
+    print(f"[LOAD] Resumen analitico actualizado ({len(df_summary)} categorias) en 'air_quality_summary'.")
+    return len(df_summary)
 
 
 def get_persistence_metrics(engine):
-    """Retorna el total de filas guardadas en cada tabla."""
+    """
+    Consulta y retorna las metricas de persistencia de la base de datos.
+    """
     with engine.connect() as conn:
-        total_horarios = conn.execute(text("SELECT COUNT(*) FROM weather_hourly")).scalar()
-        total_diarios = conn.execute(text("SELECT COUNT(*) FROM weather_daily_summary")).scalar()
+        total_mediciones = conn.execute(
+            text("SELECT COUNT(*) FROM air_quality_measurements")
+        ).scalar()
+        total_resumen = conn.execute(
+            text("SELECT COUNT(*) FROM air_quality_summary")
+        ).scalar()
 
     return {
-        "total_hourly_records": total_horarios or 0,
-        "total_daily_summaries": total_diarios or 0
+        "total_measurements": total_mediciones or 0,
+        "total_summary_groups": total_resumen or 0
     }

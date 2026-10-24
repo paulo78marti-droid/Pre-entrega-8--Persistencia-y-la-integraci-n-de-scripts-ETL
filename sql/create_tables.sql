@@ -1,46 +1,51 @@
 -- ====================================================================
--- Script DDL: Creación de tablas para la Base de Datos SQLite
--- Proyecto: Pipeline ETL Meteorológico
+-- Script DDL: Creacion de tablas para la Base de Datos SQLite
+-- Proyecto: Pipeline ETL de Calidad del Aire (Air Quality Dataset)
 -- Curso: Coderhouse - Data Science II
+-- Pre-entrega: Persistencia y la integracion de scripts ETL
 -- ====================================================================
 
--- 1. Tabla de datos horarios detallados
--- Guarda las observaciones hora a hora del clima en la ciudad.
-CREATE TABLE IF NOT EXISTS weather_hourly (
+-- 1. Tabla de mediciones individuales (Datos limpios y transformados)
+CREATE TABLE IF NOT EXISTS air_quality_measurements (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    city VARCHAR(50) NOT NULL,
-    timestamp DATETIME NOT NULL,
-    temperature_c REAL NOT NULL,
-    humidity_pct REAL,
-    precipitation_mm REAL NOT NULL DEFAULT 0.0,
-    wind_speed_kmh REAL NOT NULL,
-    wind_category VARCHAR(30) NOT NULL,
-    is_rainy BOOLEAN NOT NULL,
-    ingested_at DATETIME NOT NULL,
-    CONSTRAINT uq_city_timestamp UNIQUE (city, timestamp)
+    measurement_id INTEGER NOT NULL UNIQUE,
+    pm25 REAL NOT NULL,
+    pm10 REAL NOT NULL,
+    nox REAL NOT NULL,
+    no2 REAL NOT NULL,
+    so2 REAL NOT NULL,
+    vocs REAL NOT NULL,
+    co REAL NOT NULL,
+    co2 REAL NOT NULL,
+    ch4 REAL NOT NULL,
+    temperature REAL NOT NULL,
+    quality_level VARCHAR(30) NOT NULL,
+    is_high_pollution BOOLEAN NOT NULL,
+    ingested_at DATETIME NOT NULL
 );
 
--- Índice para acelerar las consultas por ciudad y fecha/hora
-CREATE INDEX IF NOT EXISTS idx_weather_hourly_city_time 
-ON weather_hourly (city, timestamp);
+-- Indices para acelerar consultas analiticas por nivel de calidad y concentracion PM2.5
+CREATE INDEX IF NOT EXISTS idx_air_quality_level 
+ON air_quality_measurements (quality_level);
+
+CREATE INDEX IF NOT EXISTS idx_air_quality_pm25 
+ON air_quality_measurements (pm25);
 
 
--- 2. Tabla de resumen diario (Data Mart / Agregaciones)
--- Guarda un resumen consolidado por día con métricas clave (mín, máx, promedio de temp, lluvia acumulada).
-CREATE TABLE IF NOT EXISTS weather_daily_summary (
+-- 2. Tabla de resumen analitico (Agregacion / Data Mart)
+-- Consolida metricas clave agrupadas por categoria de calidad del aire.
+CREATE TABLE IF NOT EXISTS air_quality_summary (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    city VARCHAR(50) NOT NULL,
-    date DATE NOT NULL,
-    temp_min_c REAL NOT NULL,
-    temp_max_c REAL NOT NULL,
-    temp_avg_c REAL NOT NULL,
-    total_precipitation_mm REAL NOT NULL DEFAULT 0.0,
-    avg_wind_speed_kmh REAL NOT NULL,
-    rainy_hours_count INTEGER NOT NULL DEFAULT 0,
-    ingested_at DATETIME NOT NULL,
-    CONSTRAINT uq_city_date UNIQUE (city, date)
+    quality_level VARCHAR(30) NOT NULL UNIQUE,
+    record_count INTEGER NOT NULL,
+    avg_pm25 REAL NOT NULL,
+    avg_pm10 REAL NOT NULL,
+    avg_co2 REAL NOT NULL,
+    avg_temperature REAL NOT NULL,
+    max_pm25 REAL NOT NULL,
+    ingested_at DATETIME NOT NULL
 );
 
--- Índice para acelerar consultas por ciudad y fecha
-CREATE INDEX IF NOT EXISTS idx_weather_daily_city_date 
-ON weather_daily_summary (city, date);
+-- Indice para consultas rapidas sobre la tabla resumen
+CREATE INDEX IF NOT EXISTS idx_air_summary_quality 
+ON air_quality_summary (quality_level);

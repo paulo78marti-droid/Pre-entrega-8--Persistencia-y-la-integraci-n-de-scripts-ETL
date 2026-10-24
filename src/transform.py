@@ -1,103 +1,120 @@
 """
-Módulo de Transformación (ETL)
+Modulo de Transformacion (ETL)
 Curso: Data Science II - Coderhouse
 
-Limpia los datos del clima, ajusta tipos de datos, realiza feature engineering básico
-y genera un resumen diario de métricas climáticas.
+Limpia los datos de calidad del aire, normaliza nombres de columnas,
+corrige valores atipicos negativos, realiza feature engineering basico
+y genera una tabla analitica de resumen agrupado por nivel de calidad.
 """
 from datetime import datetime
 import pandas as pd
-from config import settings
 
 
-def clasificar_viento(velocidad):
-    """Clasifica la velocidad del viento en categorías simples."""
-    if velocidad < 15.0:
-        return "Leve"
-    elif velocidad < 30.0:
-        return "Moderado"
+def clasificar_calidad_aire(pm25_valor):
+    """
+    Clasifica el nivel de calidad del aire segun la concentracion de PM2.5 (ug/m3)
+    siguiendo estandares basicos de salud ambiental:
+    - Buena: <= 35.4
+    - Moderada: > 35.4 y <= 55.4
+    - Danina: > 55.4
+    """
+    if pm25_valor <= 35.4:
+        return "Buena"
+    elif pm25_valor <= 55.4:
+        return "Moderada"
     else:
-        return "Fuerte"
+        return "Danina"
 
 
-def transform_weather_data(raw_data, city=settings.CITY_NAME):
+def transform_air_quality_data(df_raw):
     """
-    Transforma el diccionario JSON crudo de la API en dos DataFrames:
-    1. df_hourly: mediciones horarias limpias con nuevas columnas.
-    2. df_daily: resumen diario agrupado (mín, máx, promedio, lluvia total).
+    Transforma el DataFrame crudo de calidad del aire en dos conjuntos limpios:
+    1. df_measurements: 500 mediciones individuales limpias con categorias y flags.
+    2. df_summary: resumen analitico agregado por nivel de calidad del aire.
     """
-    hourly = raw_data.get("hourly", {})
-    if not hourly:
-        raise ValueError("El JSON no contiene el nodo 'hourly'.")
+    print(f"[TRANSFORM] Iniciando transformacion de {len(df_raw)} registros crudos...")
 
-    # 1. Crear DataFrame a partir de las listas del JSON
-    df = pd.DataFrame({
-        "timestamp": hourly.get("time", []),
-        "temperature_c": hourly.get("temperature_2m", []),
-        "humidity_pct": hourly.get("relative_humidity_2m", []),
-        "precipitation_mm": hourly.get("precipitation", []),
-        "wind_speed_kmh": hourly.get("wind_speed_10m", [])
-    })
+    df = df_raw.copy()
 
-    print(f"[TRANSFORM] Filas recibidas de la API: {len(df)}")
+    # 1. Normalizacion de nombres de columnas a minusculas sin puntos
+    column_mapping = {
+        "PM2.5": "pm25",
+        "PM10": "pm10",
+        "NOx": "nox",
+        "NO2": "no2",
+        "SO2": "so2",
+        "VOCs": "vocs",
+        "CO": "co",
+        "CO2": "co2",
+        "CH4": "ch4",
+        "Temperature": "temperature"
+    }
+    df = df.rename(columns=column_mapping)
 
-    # 2. Conversión de tipos de datos
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    df["city"] = city
+    # 2. Asignar un identificador unico de medicion
+    df["measurement_id"] = range(1, len(df) + 1)
 
-    # 3. Limpieza de datos y manejo de valores nulos
-    # Eliminamos registros sin fecha o temperatura (datos críticos)
-    df = df.dropna(subset=["timestamp", "temperature_c"]).copy()
+    # 3. Tratamiento de nulos y tipos de datos
+    # Verificamos si existen nulos y descartamos filas incompletas
+    filas_con_nulos = df.isnull().any(axis=1).sum()
+    if filas_con_nulos > 0:
+        print(f"[TRANSFORM] Se detectaron {filas_con_nulos} filas con nulos; se procede a descartarlas.")
+        df = df.dropna().copy()
+    else:
+        print("[TRANSFORM] No se encontraron valores nulos en el dataset.")
 
-    # Si falta la lluvia, asumimos 0 mm
-    df["precipitation_mm"] = df["precipitation_mm"].fillna(0.0)
+    # 4. Limpieza de datos: Correccion de concentraciones negativas
+    # En sensores fisicos, valores negativos de gases suelen ser ruidos de calibracion.
+    columnas_gases = ["pm25", "pm10", "nox", "no2", "so2", "vocs", "co", "co2", "ch4"]
+    for col in columnas_gases:
+        if (df[col] < 0).any():
+            cantidad_negativos = (df[col] < 0).sum()
+            print(f"[TRANSFORM] Corrigiendo {cantidad_negativos} valores negativos en '{col}' a 0.0")
+            df[col] = df[col].clip(lower=0.0)
 
-    # Si falta humedad, completamos con la mediana
-    if df["humidity_pct"].isnull().any():
-        mediana_humedad = df["humidity_pct"].median()
-        df["humidity_pct"] = df["humidity_pct"].fillna(mediana_humedad)
+    # Redondeo general a 2 decimales para claridad y almacenamiento optimo
+    todas_las_numericas = columnas_gases + ["temperature"]
+    df[todas_las_numericas] = df[todas_las_numericas].round(2)
 
-    # Redondeo de variables numéricas a 2 decimales
-    df["temperature_c"] = df["temperature_c"].round(2)
-    df["precipitation_mm"] = df["precipitation_mm"].round(2)
-    df["wind_speed_kmh"] = df["wind_speed_kmh"].round(2)
+    # 5. Feature Engineering: Creacion de nuevas variables
+    # a) Clasificacion del aire segun PM2.5
+    df["quality_level"] = df["pm25"].apply(clasificar_calidad_aire)
 
-    # 4. Feature Engineering (creación de nuevas variables)
-    df["wind_category"] = df["wind_speed_kmh"].apply(clasificar_viento)
-    df["is_rainy"] = df["precipitation_mm"] > 0.0
-    df["ingested_at"] = datetime.now()
+    # b) Flag booleano de alta contaminacion (PM2.5 > 55.4 o CO2 > 500)
+    df["is_high_pollution"] = (df["pm25"] > 55.4) | (df["co2"] > 500.0)
 
-    # Evitamos filas duplicadas en el mismo timestamp
-    df = df.drop_duplicates(subset=["city", "timestamp"]).copy()
+    # c) Timestamp de persistencia (trazabilidad)
+    now = datetime.now()
+    df["ingested_at"] = now
 
-    # Ordenar columnas de la tabla horaria
-    columnas_horarias = [
-        "city", "timestamp", "temperature_c", "humidity_pct",
-        "precipitation_mm", "wind_speed_kmh", "wind_category",
-        "is_rainy", "ingested_at"
+    # Columnas ordenadas para la tabla de mediciones
+    cols_measurements = [
+        "measurement_id", "pm25", "pm10", "nox", "no2", "so2",
+        "vocs", "co", "co2", "ch4", "temperature",
+        "quality_level", "is_high_pollution", "ingested_at"
     ]
-    df_hourly = df[columnas_horarias].copy()
+    df_measurements = df[cols_measurements].copy()
 
-    # 5. Agregación analítica por día (Data Mart / Resumen)
-    df["date"] = df["timestamp"].dt.date
-
-    df_daily = df.groupby(["city", "date"]).agg(
-        temp_min_c=("temperature_c", "min"),
-        temp_max_c=("temperature_c", "max"),
-        temp_avg_c=("temperature_c", "mean"),
-        total_precipitation_mm=("precipitation_mm", "sum"),
-        avg_wind_speed_kmh=("wind_speed_kmh", "mean"),
-        rainy_hours_count=("is_rainy", "sum")
+    # 6. Agregacion Analitica: Resumen por nivel de calidad del aire
+    df_summary = df.groupby("quality_level").agg(
+        record_count=("measurement_id", "count"),
+        avg_pm25=("pm25", "mean"),
+        avg_pm10=("pm10", "mean"),
+        avg_co2=("co2", "mean"),
+        avg_temperature=("temperature", "mean"),
+        max_pm25=("pm25", "max")
     ).reset_index()
 
-    # Redondeos en el resumen diario
-    df_daily["temp_min_c"] = df_daily["temp_min_c"].round(2)
-    df_daily["temp_max_c"] = df_daily["temp_max_c"].round(2)
-    df_daily["temp_avg_c"] = df_daily["temp_avg_c"].round(2)
-    df_daily["total_precipitation_mm"] = df_daily["total_precipitation_mm"].round(2)
-    df_daily["avg_wind_speed_kmh"] = df_daily["avg_wind_speed_kmh"].round(2)
-    df_daily["rainy_hours_count"] = df_daily["rainy_hours_count"].astype(int)
-    df_daily["ingested_at"] = datetime.now()
+    # Redondeos en el resumen
+    df_summary["avg_pm25"] = df_summary["avg_pm25"].round(2)
+    df_summary["avg_pm10"] = df_summary["avg_pm10"].round(2)
+    df_summary["avg_co2"] = df_summary["avg_co2"].round(2)
+    df_summary["avg_temperature"] = df_summary["avg_temperature"].round(2)
+    df_summary["max_pm25"] = df_summary["max_pm25"].round(2)
+    df_summary["ingested_at"] = now
 
-    print(f"[TRANSFORM] Datos procesados: {len(df_hourly)} filas horarias y {len(df_daily)} días resumidos.")
-    return df_hourly, df_daily
+    print(f"[TRANSFORM] Transformacion exitosa:")
+    print(f"  • {len(df_measurements)} mediciones procesadas.")
+    print(f"  • {len(df_summary)} grupos calculados en el resumen analitico.")
+
+    return df_measurements, df_summary

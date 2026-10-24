@@ -27,6 +27,7 @@ venv/
 .venv/
 env/
 ENV/
+py_env/
 env.bak/
 venv.bak/
 
@@ -39,9 +40,10 @@ venv.bak/
 *.sqlite3
 *.duckdb
 
-# Staging raw data (preserve folder structure with .gitkeep)
+# Staging raw data: conservar dataset de respaldo para reproduccion offline
 data/raw/*
 !data/raw/.gitkeep
+!data/raw/air_quality_dataset.csv
 
 # IDEs & OS
 .vscode/
